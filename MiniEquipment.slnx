@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Controller.Core/Controller.Core.csproj" />
+    <Project Path="src/Controller.WinForms/Controller.WinForms.csproj" />
+    <Project Path="src/Equipment.Simulator/Equipment.Simulator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Controller.Core.Tests/Controller.Core.Tests.csproj" />
+  </Folder>
+</Solution>
