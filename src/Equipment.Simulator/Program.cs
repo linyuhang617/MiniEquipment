@@ -1,13 +1,14 @@
 /*
  * 檔案：Program.cs
  * 專案：Equipment.Simulator
- * 功能：模擬機台（TCP Server）。在 127.0.0.1:5000 監聽，
- *       主控程式連上或離線時在主控台印出訊息，並印出收到的資料。
- *       Slice 0 只負責「能被連上」，還不處理任何指令。
+ * 功能：模擬機台（TCP Server）。在 127.0.0.1:5000 監聽，以「一行一筆，\n 結尾」的文字協定回應指令：
+ *       - GET STATUS：回覆 OK IDLE，並故意分兩段送出，用來驗證主控端的封包切割
+ *       - SLEEP     ：故意不回應，用來驗證主控端的逾時處理
+ *       - 其他指令  ：回覆 ERR UNKNOWN_COMMAND
  *
  * @author  linyuhang617
  * @since   2026-10-06
- * @version 0.1（Slice 0 Walking Skeleton）
+ * @version 0.2（Slice 1 送指令、收回應）
  */
 
 using System.Net;
@@ -17,7 +18,7 @@ using System.Text;
 namespace Equipment.Simulator;
 
 /// <summary>
-/// 模擬機台的進入點與連線處理。
+/// 模擬機台的進入點、連線處理與指令處理。
 /// </summary>
 internal static class Program
 {
@@ -37,6 +38,7 @@ internal static class Program
         var listener = new TcpListener(IPAddress.Loopback, Port);
         listener.Start();
         Log($"模擬機台啟動，監聽 127.0.0.1:{Port}，按 Ctrl+C 結束。");
+        Log("支援指令：GET STATUS（回 OK IDLE，故意分兩段送）、SLEEP（故意不回應）");
 
         // 用 CancellationTokenSource 統一通知所有非同步工作「該結束了」
         using var cts = new CancellationTokenSource();
@@ -69,7 +71,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 處理單一主控程式的連線：持續讀取資料並印出，直到對方離線或程式結束。
+    /// 處理單一主控程式的連線：一行一行讀取指令並回應，直到對方離線或程式結束。
     /// </summary>
     /// <param name="client">已接受的 TCP 連線。</param>
     /// <param name="ct">程式結束時用來中止讀取的取消權杖。</param>
@@ -83,18 +85,25 @@ internal static class Program
         {
             using (client)
             {
+                // 關掉 Nagle 演算法，讓分段送出真的變成兩個 TCP 封包
+                client.NoDelay = true;
                 NetworkStream stream = client.GetStream();
-                var buffer = new byte[1024];
+
+                // 模擬機台這端用 StreamReader 讀行就好；主控端則自己實作 LineFramer 練習封包切割
+                using var reader = new StreamReader(stream, Encoding.UTF8);
 
                 while (true)
                 {
-                    int n = await stream.ReadAsync(buffer, ct);
+                    string? line = await reader.ReadLineAsync(ct);
 
-                    // 讀到 0 byte 代表對方正常關閉連線
-                    if (n == 0) break;
+                    // 讀到 null 代表對方正常關閉連線
+                    if (line is null) break;
 
-                    // Slice 0 只把收到的資料印出來，Slice 1 才處理指令
-                    Log($"收到 {n} bytes：{Encoding.UTF8.GetString(buffer, 0, n).TrimEnd()}");
+                    line = line.Trim();
+                    if (line.Length == 0) continue;
+
+                    Log($"收到指令：{line}");
+                    await HandleCommandAsync(stream, line, ct);
                 }
             }
         }
@@ -110,6 +119,46 @@ internal static class Program
 
         Log($"主控已離線：{endpoint}");
     }
+
+    /// <summary>
+    /// 依指令內容回應主控程式。
+    /// </summary>
+    /// <param name="stream">要回寫的網路串流。</param>
+    /// <param name="command">收到的指令（已去除前後空白）。</param>
+    /// <param name="ct">程式結束時用來中止回寫的取消權杖。</param>
+    /// <returns>代表回應動作的非同步工作。</returns>
+    private static async Task HandleCommandAsync(NetworkStream stream, string command, CancellationToken ct)
+    {
+        switch (command.ToUpperInvariant())
+        {
+            case "GET STATUS":
+                // 故意把 "OK IDLE\n" 拆成兩段送，模擬真實設備的半包
+                await SendRawAsync(stream, "OK ", ct);
+                await Task.Delay(300, ct);
+                await SendRawAsync(stream, "IDLE\n", ct);
+                Log("回覆：OK IDLE（分兩段送出）");
+                break;
+
+            case "SLEEP":
+                Log("故意不回應，用來測試主控的逾時");
+                break;
+
+            default:
+                await SendRawAsync(stream, "ERR UNKNOWN_COMMAND\n", ct);
+                Log("回覆：ERR UNKNOWN_COMMAND");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 把文字以 UTF-8 原樣寫入串流（不自動補 \n，方便故意分段送出）。
+    /// </summary>
+    /// <param name="stream">要寫入的網路串流。</param>
+    /// <param name="text">要送出的文字。</param>
+    /// <param name="ct">取消權杖。</param>
+    /// <returns>代表寫入動作的非同步工作。</returns>
+    private static Task SendRawAsync(NetworkStream stream, string text, CancellationToken ct) =>
+        stream.WriteAsync(Encoding.UTF8.GetBytes(text), ct).AsTask();
 
     /// <summary>
     /// 在主控台印出帶有時間戳記（到毫秒）的訊息。
