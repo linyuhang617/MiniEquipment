@@ -7,11 +7,11 @@
  *
  * @author  linyuhang617
  * @since   2026-10-06
- * @version 0.2（Slice 1 送指令、收回應）
+ * @version 0.3（Slice 2：假連線移到 Fakes/FakeDeviceConnection.cs 共用）
  */
 
-using Controller.Core.Connection;
 using Controller.Core.Protocol;
+using Controller.Core.Tests.Fakes;
 
 namespace Controller.Core.Tests;
 
@@ -120,82 +120,5 @@ public class DeviceClientTests
         fake.SimulateReceive("EVT DOOR_OPEN");
 
         Assert.Equal<string>(new[] { "EVT DOOR_OPEN" }, unsolicited);
-    }
-
-    /// <summary>
-    /// 測試用的假連線：不開網路，由測試程式直接控制收到的訊息與斷線時機。
-    /// </summary>
-    private sealed class FakeDeviceConnection : IDeviceConnection
-    {
-        /// <summary>取得所有送出過的訊息，依送出順序排列。</summary>
-        public List<string> SentLines { get; } = new();
-
-        /// <summary>取得目前是否已連線（預設已連線）。</summary>
-        public bool IsConnected { get; private set; } = true;
-
-        /// <inheritdoc />
-        public event Action<string>? LineReceived;
-
-        /// <inheritdoc />
-        public event Action<Exception?>? Disconnected;
-
-        /// <summary>每送出一筆訊息就觸發，測試用來模擬設備回應。</summary>
-        public event Action<string>? LineSent;
-
-        /// <summary>
-        /// 模擬連線成功。
-        /// </summary>
-        /// <param name="cancellationToken">未使用。</param>
-        /// <returns>已完成的工作。</returns>
-        public Task ConnectAsync(CancellationToken cancellationToken = default)
-        {
-            IsConnected = true;
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// 模擬自己中斷連線。
-        /// </summary>
-        /// <returns>已完成的工作。</returns>
-        public Task DisconnectAsync()
-        {
-            IsConnected = false;
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// 記錄送出的訊息並觸發 <see cref="LineSent"/>。
-        /// </summary>
-        /// <param name="line">送出的訊息。</param>
-        /// <param name="cancellationToken">未使用。</param>
-        /// <returns>已完成的工作。</returns>
-        public Task SendLineAsync(string line, CancellationToken cancellationToken = default)
-        {
-            SentLines.Add(line);
-            LineSent?.Invoke(line);
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// 模擬從設備收到一筆訊息。
-        /// </summary>
-        /// <param name="line">收到的訊息。</param>
-        public void SimulateReceive(string line) => LineReceived?.Invoke(line);
-
-        /// <summary>
-        /// 模擬設備端斷線。
-        /// </summary>
-        /// <param name="error">造成斷線的例外；正常關閉時為 null。</param>
-        public void SimulateDisconnect(Exception? error = null)
-        {
-            IsConnected = false;
-            Disconnected?.Invoke(error);
-        }
-
-        /// <summary>
-        /// 假連線沒有需要釋放的資源。
-        /// </summary>
-        /// <returns>已完成的工作。</returns>
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

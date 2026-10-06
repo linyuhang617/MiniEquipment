@@ -3,12 +3,15 @@
  * 專案：Equipment.Simulator
  * 功能：模擬機台（TCP Server）。在 127.0.0.1:5000 監聽，以「一行一筆，\n 結尾」的文字協定回應指令：
  *       - GET STATUS：回覆 OK IDLE，並故意分兩段送出，用來驗證主控端的封包切割
- *       - SLEEP     ：故意不回應，用來驗證主控端的逾時處理
+ *       - PING      ：回覆 OK PONG，供主控端心跳使用
+ *       - SLEEP     ：故意不回應，用來驗證主控端的指令逾時
+ *       - HANG      ：回覆 OK HANG 後模擬設備當機（連線還在但之後完全不回應），
+ *                     用來驗證主控端靠心跳偵測斷線並自動重連
  *       - 其他指令  ：回覆 ERR UNKNOWN_COMMAND
  *
  * @author  linyuhang617
  * @since   2026-10-06
- * @version 0.2（Slice 1 送指令、收回應）
+ * @version 0.3（Slice 2 斷線重連）
  */
 
 using System.Net;
@@ -38,7 +41,7 @@ internal static class Program
         var listener = new TcpListener(IPAddress.Loopback, Port);
         listener.Start();
         Log($"模擬機台啟動，監聽 127.0.0.1:{Port}，按 Ctrl+C 結束。");
-        Log("支援指令：GET STATUS（回 OK IDLE，故意分兩段送）、SLEEP（故意不回應）");
+        Log("支援指令：GET STATUS、PING、SLEEP（不回應）、HANG（模擬當機）");
 
         // 用 CancellationTokenSource 統一通知所有非同步工作「該結束了」
         using var cts = new CancellationTokenSource();
@@ -81,6 +84,9 @@ internal static class Program
         var endpoint = client.Client.RemoteEndPoint;
         Log($"主控已連上：{endpoint}");
 
+        // 這條連線是否處於「當機」狀態；每條連線各自獨立，重連後的新連線會恢復正常
+        bool hung = false;
+
         try
         {
             using (client)
@@ -102,7 +108,21 @@ internal static class Program
                     line = line.Trim();
                     if (line.Length == 0) continue;
 
-                    Log($"收到指令：{line}");
+                    if (hung)
+                    {
+                        // 當機中：照樣收資料（連線不斷），但完全不回應
+                        Log($"（當機中，不回應）收到：{line}");
+                        continue;
+                    }
+
+                    if (line.Equals("HANG", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await SendRawAsync(stream, "OK HANG\n", ct);
+                        hung = true;
+                        Log("收到 HANG：模擬設備當機，之後這條連線不再回應任何指令");
+                        continue;
+                    }
+
                     await HandleCommandAsync(stream, line, ct);
                 }
             }
@@ -113,7 +133,7 @@ internal static class Program
         }
         catch (IOException ex)
         {
-            // 例如主控程式被強制關閉，連線被重置
+            // 例如主控程式被強制關閉，或主控端判定斷線後主動關閉
             Log($"連線異常：{ex.Message}");
         }
 
@@ -121,7 +141,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// 依指令內容回應主控程式。
+    /// 依指令內容回應主控程式（HANG 由 <see cref="HandleClientAsync"/> 處理）。
     /// </summary>
     /// <param name="stream">要回寫的網路串流。</param>
     /// <param name="command">收到的指令（已去除前後空白）。</param>
@@ -132,6 +152,7 @@ internal static class Program
         switch (command.ToUpperInvariant())
         {
             case "GET STATUS":
+                Log($"收到指令：{command}");
                 // 故意把 "OK IDLE\n" 拆成兩段送，模擬真實設備的半包
                 await SendRawAsync(stream, "OK ", ct);
                 await Task.Delay(300, ct);
@@ -139,11 +160,18 @@ internal static class Program
                 Log("回覆：OK IDLE（分兩段送出）");
                 break;
 
+            case "PING":
+                // 心跳每 5 秒一次，只印一行簡短紀錄，避免洗版
+                await SendRawAsync(stream, "OK PONG\n", ct);
+                Log("心跳：PING → OK PONG");
+                break;
+
             case "SLEEP":
-                Log("故意不回應，用來測試主控的逾時");
+                Log($"收到指令：{command}，故意不回應，用來測試主控的逾時");
                 break;
 
             default:
+                Log($"收到指令：{command}");
                 await SendRawAsync(stream, "ERR UNKNOWN_COMMAND\n", ct);
                 Log("回覆：ERR UNKNOWN_COMMAND");
                 break;
