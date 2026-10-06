@@ -8,10 +8,11 @@
  *       3. 自動重連：斷線後依 1、2、4、8… 秒的間隔（指數退避，最多 30 秒）不斷重試，
  *          避免設備還沒起來時一直狂連，造成網路與設備負擔。
  *       連線物件由外部傳入的工廠建立，所以可以換成序列埠，也可以在單元測試換成假連線。
+ *       Slice 3 起實作 ICommandSender，供機台控制器（MachineController）送指令。
  *
  * @author  linyuhang617
  * @since   2026-10-07
- * @version 0.3（Slice 2 斷線重連）
+ * @version 0.4（Slice 3：實作 ICommandSender）
  */
 
 using Controller.Core.Protocol;
@@ -25,7 +26,7 @@ namespace Controller.Core.Connection;
 /// 事件 <see cref="StatusChanged"/> 與 <see cref="UnsolicitedLineReceived"/> 可能在背景執行緒觸發，
 /// 訂閱者若要更新畫面，必須自行切回 UI 執行緒。
 /// </remarks>
-public sealed class ConnectionSupervisor : IAsyncDisposable
+public sealed class ConnectionSupervisor : IAsyncDisposable, ICommandSender
 {
     /// <summary>每次（重新）連線時用來建立新連線物件的工廠。</summary>
     private readonly Func<IDeviceConnection> _connectionFactory;

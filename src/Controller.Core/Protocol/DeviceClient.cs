@@ -5,10 +5,11 @@
  *       超過指定時間沒有回應就拋出 TimeoutException。
  *       一次只允許一筆指令在等回應（與多數設備的文字協定相同），後面的指令會排隊。
  *       逾時後才到的回應會歸類為「非預期訊息」，不會被誤認成下一筆指令的回應。
+ *       機台主動事件（EVT 開頭）一律歸類為非預期訊息，即使剛好有指令在等回應。
  *
  * @author  linyuhang617
  * @since   2026-10-06
- * @version 0.2（Slice 1 送指令、收回應）
+ * @version 0.4（Slice 3：主動事件不會被誤當成回應）
  */
 
 using Controller.Core.Connection;
@@ -98,11 +99,18 @@ public sealed class DeviceClient : IDisposable
     }
 
     /// <summary>
-    /// 收到一筆訊息時的處理：有指令在等就當作它的回應，否則當作非預期訊息轉發出去。
+    /// 收到一筆訊息時的處理：機台事件一律轉發；其他訊息有指令在等就當作它的回應，否則當作非預期訊息轉發。
     /// </summary>
     /// <param name="line">收到的完整訊息。</param>
     private void OnLineReceived(string line)
     {
+        // 機台主動事件（EVT 開頭）永遠不是指令的回應，即使剛好有指令在等，也不能被它拿走
+        if (line.StartsWith("EVT ", StringComparison.OrdinalIgnoreCase))
+        {
+            UnsolicitedLineReceived?.Invoke(line);
+            return;
+        }
+
         TaskCompletionSource<string>? pending;
         lock (_gate)
         {

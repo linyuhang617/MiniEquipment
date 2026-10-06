@@ -9,20 +9,34 @@ C# WinForms 主控程式透過 TCP 控制模擬機台（個人練習專案）。
 - `src/Controller.Core`：通訊與核心邏輯，不依賴 WinForms
   - `Connection/`：`IDeviceConnection` 傳輸層抽象、`TcpDeviceConnection` TCP 實作、
     `ConnectionSupervisor` 心跳與自動重連
-  - `Protocol/`：`LineFramer` 封包切割、`DeviceClient` 請求／回應與逾時
+  - `Protocol/`：`LineFramer` 封包切割、`DeviceClient` 請求／回應與逾時、`ICommandSender` 指令傳送介面
+  - `Machine/`：`MachineStateMachine` 機台狀態機、`MachineController` 依狀態機規則下指令
 - `src/Controller.WinForms`：操作畫面
-- `tests/Controller.Core.Tests`：單元測試（xUnit），`Fakes/` 為測試用假連線
+- `tests/Controller.Core.Tests`：單元測試（xUnit），`Fakes/` 為測試用假連線與假指令傳送者
+- `docs/state-machine.md`：機台狀態圖與轉換規則
 
 ## 通訊協定
 一行一筆訊息，以 `\n` 結尾，UTF-8 編碼。
 
 | 主控送出 | 機台回覆 | 說明 |
 | --- | --- | --- |
-| `GET STATUS` | `OK IDLE` | 機台故意分兩段送（`OK ` 與 `IDLE\n`），用來驗證封包切割 |
+| `START` / `PAUSE` / `STOP` / `RESET` | `OK <新狀態>` 或 `ERR INVALID_STATE <目前狀態>` | 機台狀態轉換，機台端也會檢查規則 |
+| `GET STATUS` | `OK <目前狀態>` | 例如 `OK RUNNING`；機台故意分兩段送，用來驗證封包切割 |
 | `PING` | `OK PONG` | 心跳，主控每 5 秒自動送一次 |
 | `SLEEP` | （不回應） | 用來驗證 3 秒指令逾時 |
 | `HANG` | `OK HANG` | 之後這條連線完全不回應，模擬設備當機，用來驗證心跳偵測 |
 | 其他 | `ERR UNKNOWN_COMMAND` | |
+| `ALARM` | `OK SIMULATED` | 測試用：讓機台觸發警報（效果與在模擬機台視窗按 A 鍵相同） |
+| （機台主動） | `EVT ALARM <代碼>` | 機台發生警報時主動送出，主控切換到警報狀態 |
+
+## 機台狀態機
+待機 → 啟動 → 運轉 → 暫停／停止；任何狀態收到警報都進入警報，必須「復歸」才能回到待機。
+狀態圖與完整規則見 [docs/state-machine.md](docs/state-machine.md)。
+
+- 按鈕依狀態自動啟用／停用，不能按到當下不允許的動作
+- 非法操作有三道防線：畫面停用按鈕 → 主控端狀態機拒絕並記錄 → 機台回 `ERR INVALID_STATE`
+- 機台回 `OK` 才轉換狀態；連線與重連後用 `GET STATUS` 與機台同步
+- 機台主動事件（`EVT`）永遠不會被誤當成指令的回應
 
 ## 斷線重連機制
 - **心跳**：每 5 秒送 `PING`，2 秒內沒回應算漏一次，連續 2 次就判定斷線。
@@ -51,4 +65,6 @@ dotnet test
 - [x] Slice 0 Walking Skeleton：連線／中斷、逾時、失敗不當機
 - [x] Slice 1 送指令、收回應：封包切割（半包、黏包）、3 秒逾時、逾時後的遲到回應不會錯配
 - [x] Slice 2 斷線重連：5 秒心跳、連續 2 次沒回應判定斷線、1→2→4…→30 秒指數退避自動重連
-- [ ] Slice 3 機台狀態機
+- [x] Slice 3 機台狀態機：待機／運轉／暫停／警報、按鈕依狀態啟用、非法轉換拒絕並記錄、重連後同步
+- [ ] Slice 4 警報清單與 Log 檔
+- [ ] Slice 5 Arduino 燈號塔

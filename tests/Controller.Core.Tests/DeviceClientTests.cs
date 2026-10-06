@@ -7,7 +7,7 @@
  *
  * @author  linyuhang617
  * @since   2026-10-06
- * @version 0.3（Slice 2：假連線移到 Fakes/FakeDeviceConnection.cs 共用）
+ * @version 0.4（Slice 3：新增「主動事件不會被誤當成回應」測試）
  */
 
 using Controller.Core.Protocol;
@@ -104,6 +104,30 @@ public class DeviceClientTests
         fake.SimulateDisconnect();
 
         await Assert.ThrowsAsync<IOException>(() => waiting);
+    }
+
+    /// <summary>
+    /// 等待回應時剛好收到機台事件（EVT），事件應轉發為非預期訊息，指令仍拿到真正的回應。
+    /// </summary>
+    /// <returns>非同步測試工作。</returns>
+    [Fact]
+    public async Task EventWhileWaiting_IsNotTakenAsReply()
+    {
+        var fake = new FakeDeviceConnection();
+        fake.LineSent += line =>
+        {
+            if (line != "START") return;
+            fake.SimulateReceive("EVT ALARM E101");   // 事件先到
+            fake.SimulateReceive("OK RUNNING");       // 真正的回應後到
+        };
+        using var client = new DeviceClient(fake);
+        var unsolicited = new List<string>();
+        client.UnsolicitedLineReceived += unsolicited.Add;
+
+        string reply = await client.SendCommandAsync("START", LongTimeout);
+
+        Assert.Equal("OK RUNNING", reply);
+        Assert.Equal<string>(new[] { "EVT ALARM E101" }, unsolicited);
     }
 
     /// <summary>
